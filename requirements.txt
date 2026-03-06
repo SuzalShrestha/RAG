@@ -1,0 +1,13 @@
+langchain
+langchain-community
+langchain-ollama
+langchain-text-splitters
+faiss-cpu
+streamlit
+pydantic-settings
+PyMuPDF
+pypdf
+python-docx
+rank-bm25
+sentence-transformers
+ragas

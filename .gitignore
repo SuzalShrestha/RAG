@@ -1,0 +1,17 @@
+.env
+.venv/
+.pycache/
+__pycache__/
+*.pyc
+data/raw/*
+data/processed/*
+data/eval/*.jsonl
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/eval/.gitkeep
+!data/eval/sample_questions.jsonl
+indexes/faiss/*
+indexes/bm25/*
+!indexes/faiss/.gitkeep
+!indexes/bm25/.gitkeep
+data/metadata.db
