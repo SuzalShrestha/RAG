@@ -11,15 +11,24 @@ from app.utils.models import RetrievedChunk
 class SparseIndex:
     def __init__(self) -> None:
         self.retriever = None
+        self.chunk_count = 0
 
     def build(self, documents: Iterable[Document], k: int) -> None:
         documents = list(documents)
         if not documents:
-            self.retriever = None
+            self.clear()
             return
 
         self.retriever = BM25Retriever.from_documents(documents)
         self.retriever.k = k
+        self.chunk_count = len(documents)
+
+    def clear(self) -> None:
+        self.retriever = None
+        self.chunk_count = 0
+
+    def is_current(self, expected_chunk_count: int) -> bool:
+        return self.retriever is not None and self.chunk_count == expected_chunk_count
 
     def search(self, query: str, k: int) -> List[RetrievedChunk]:
         if self.retriever is None:

@@ -1,3 +1,4 @@
 {"question":"How long do customers have to request a refund?","gold_filenames":["product_guide.md"],"answer_contains":["30 calendar days"]}
 {"question":"What should an employee do if they forget their VPN password?","gold_filenames":["employee_handbook.md"],"answer_contains":["contact the IT help desk","employee ID"]}
 {"question":"When is priority support available?","gold_filenames":["product_guide.md"],"answer_contains":["Monday through Friday","9:00 AM to 6:00 PM Nepal Time"]}
+{"question":"Does the handbook mention a company gym membership policy?","expected_refusal":true}

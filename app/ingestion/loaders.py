@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from docx import Document as WordDocument
 from langchain_core.documents import Document
@@ -30,8 +30,7 @@ def compute_checksum(path: Path) -> str:
 
 
 def build_doc_id(path: Path, checksum: str) -> str:
-    raw = "{name}:{checksum}".format(name=path.name, checksum=checksum)
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha1(checksum.encode("utf-8")).hexdigest()[:16]
 
 
 def normalize_text(text: str) -> str:
@@ -43,7 +42,7 @@ def normalize_text(text: str) -> str:
     return normalized.strip()
 
 
-def load_file(path: Path) -> LoadedDocumentSet:
+def load_file(path: Path, checksum: Optional[str] = None) -> LoadedDocumentSet:
     if not path.exists():
         raise FileNotFoundError("File not found: {path}".format(path=path))
 
@@ -56,7 +55,7 @@ def load_file(path: Path) -> LoadedDocumentSet:
             )
         )
 
-    checksum = compute_checksum(path)
+    checksum = checksum or compute_checksum(path)
     doc_id = build_doc_id(path, checksum)
 
     if suffix == ".pdf":
@@ -93,11 +92,11 @@ def _base_metadata(path: Path, doc_id: str, file_type: str) -> dict:
 
 
 def _load_pdf(path: Path, doc_id: str) -> List[Document]:
-    documents = _load_pdf_with_pypdf(path, doc_id)
+    documents = _load_pdf_with_pymupdf(path, doc_id)
     if documents:
         return documents
 
-    documents = _load_pdf_with_pymupdf(path, doc_id)
+    documents = _load_pdf_with_pypdf(path, doc_id)
     if documents:
         return documents
 

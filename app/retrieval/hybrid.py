@@ -20,9 +20,21 @@ class HybridRetriever:
         self.settings = settings
 
     def retrieve(self, query: str) -> List[RetrievedChunk]:
-        dense_results = self.dense_index.search(query, self.settings.dense_top_k)
-        sparse_results = self.sparse_index.search(query, self.settings.sparse_top_k)
+        dense_results = []
+        sparse_results = []
+        if self.settings.uses_dense_retrieval():
+            dense_results = self.dense_index.search(query, self.settings.dense_top_k)
+        if self.settings.uses_sparse_retrieval():
+            sparse_results = self.sparse_index.search(query, self.settings.sparse_top_k)
 
+        return self.combine(dense_results, sparse_results)
+
+    def combine(
+        self,
+        dense_results: List[RetrievedChunk],
+        sparse_results: List[RetrievedChunk],
+    ) -> List[RetrievedChunk]:
+        
         merged = {}
         self._merge_results(
             merged,

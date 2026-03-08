@@ -14,15 +14,45 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.chains.rag import RAGPipeline
 from app.config import get_settings
+from app.utils.runtime_checks import (
+    groq_api_key_is_configured,
+    list_ollama_models,
+    missing_ollama_models,
+    ollama_is_running,
+    pinecone_api_key_is_configured,
+)
 
 
-st.set_page_config(page_title="Local RAG Q&A", layout="wide")
+st.set_page_config(page_title="Fast RAG MVP", layout="wide")
 
 
+@st.cache_resource(show_spinner=False)
 def get_pipeline() -> RAGPipeline:
-    if "pipeline" not in st.session_state:
-        st.session_state["pipeline"] = RAGPipeline()
-    return st.session_state["pipeline"]
+    return RAGPipeline()
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def get_runtime_status(base_url: str, required_models: tuple[str, ...]) -> dict:
+    if not required_models:
+        return {
+            "running": False,
+            "installed_models": [],
+            "missing_models": [],
+            "required_models": [],
+        }
+
+    running = ollama_is_running(base_url)
+    installed_models = list_ollama_models(base_url) if running else []
+    missing_models = (
+        missing_ollama_models(base_url, required_models)
+        if running else list(required_models)
+    )
+    return {
+        "running": running,
+        "installed_models": installed_models,
+        "missing_models": missing_models,
+        "required_models": list(required_models),
+    }
 
 
 def save_uploads(uploaded_files) -> List[Path]:
@@ -73,6 +103,8 @@ def render_sidebar(pipeline: RAGPipeline) -> None:
                     chunks=summary.chunks_indexed,
                 )
             )
+        elif summary.skipped_files:
+            st.sidebar.info("No new files were indexed.")
         else:
             st.sidebar.error("No files were indexed.")
 
@@ -85,14 +117,75 @@ def render_sidebar(pipeline: RAGPipeline) -> None:
             for failure in summary.failed_files:
                 st.sidebar.caption(failure)
 
+        if summary.skipped_files:
+            st.sidebar.info(
+                "Skipped {count} file(s) that were already indexed.".format(
+                    count=len(summary.skipped_files),
+                )
+            )
+            for skipped in summary.skipped_files:
+                st.sidebar.caption(skipped)
+
     settings = pipeline.settings
+    runtime_status = get_runtime_status(
+        settings.ollama_base_url,
+        tuple(settings.required_ollama_models()),
+    )
     st.sidebar.divider()
     st.sidebar.subheader("Settings")
-    st.sidebar.write("Chat model: `{model}`".format(model=settings.chat_model))
-    st.sidebar.write("Embedding model: `{model}`".format(model=settings.embedding_model))
-    st.sidebar.write("Reranker: `{model}`".format(model=settings.reranker_model))
-    st.sidebar.write("Hybrid top-k: `{k}`".format(k=settings.fused_top_k))
-    st.sidebar.write("Context chunks: `{k}`".format(k=settings.final_context_k))
+    st.sidebar.write("Answer mode: `{mode}`".format(mode=settings.normalized_answer_mode()))
+    st.sidebar.write("LLM provider: `{provider}`".format(provider=settings.normalized_llm_provider()))
+    st.sidebar.write("Retrieval provider: `{provider}`".format(provider=settings.normalized_retrieval_provider()))
+    st.sidebar.write("Rerank provider: `{provider}`".format(provider=settings.normalized_rerank_provider()))
+    st.sidebar.write("Dense retrieval: `{enabled}`".format(enabled=settings.uses_dense_retrieval()))
+    st.sidebar.write("Sparse retrieval: `{enabled}`".format(enabled=settings.uses_sparse_retrieval()))
+    st.sidebar.write("Reranker: `{enabled}`".format(enabled=settings.uses_reranker()))
+    context_k = settings.final_context_k if settings.answer_uses_llm() else settings.extractive_context_k
+    st.sidebar.write("Context chunks: `{k}`".format(k=context_k))
+    if settings.uses_dense_retrieval() and settings.uses_pinecone_retrieval():
+        st.sidebar.write("Dense index: `{name}`".format(name=settings.pinecone_dense_index))
+        st.sidebar.write("Dense model: `{model}`".format(model=settings.pinecone_dense_model))
+    elif settings.uses_dense_retrieval():
+        st.sidebar.write("Embedding model: `{model}`".format(model=settings.embedding_model))
+    if settings.uses_sparse_retrieval() and settings.uses_pinecone_retrieval():
+        st.sidebar.write("Sparse index: `{name}`".format(name=settings.pinecone_sparse_index))
+        st.sidebar.write("Sparse model: `{model}`".format(model=settings.pinecone_sparse_model))
+    if settings.answer_uses_llm():
+        st.sidebar.write("Chat model: `{model}`".format(model=settings.chat_model))
+    if settings.uses_pinecone_reranker():
+        st.sidebar.write("Rerank model: `{model}`".format(model=settings.pinecone_rerank_model))
+    elif settings.uses_reranker():
+        st.sidebar.write("Reranker model: `{model}`".format(model=settings.reranker_model))
+        st.sidebar.write("Reranker device: `{device}`".format(device=settings.reranker_device))
+
+    if settings.uses_pinecone_retrieval() or settings.uses_pinecone_reranker():
+        if pinecone_api_key_is_configured(settings.pinecone_api_key):
+            st.sidebar.success("Pinecone API key configured for retrieval.")
+        else:
+            st.sidebar.error("Pinecone API key is missing. Set `RAG_PINECONE_API_KEY` in `.env`.")
+
+    if settings.answer_uses_groq():
+        if groq_api_key_is_configured(settings.groq_api_key):
+            st.sidebar.success("Groq API key configured for answer generation.")
+        else:
+            st.sidebar.error("Groq API key is missing. Set `RAG_GROQ_API_KEY` in `.env`.")
+    elif not runtime_status["required_models"]:
+        st.sidebar.success("Current MVP mode does not require Ollama for questions.")
+    elif runtime_status["required_models"] and not runtime_status["running"]:
+        st.sidebar.error(
+            "Ollama is not reachable at `{url}`. Start `ollama serve` before asking questions.".format(
+                url=settings.ollama_base_url,
+            )
+        )
+    elif runtime_status["missing_models"]:
+        installed = ", ".join("`{name}`".format(name=name) for name in runtime_status["installed_models"]) or "none"
+        missing = ", ".join("`{name}`".format(name=name) for name in runtime_status["missing_models"])
+        st.sidebar.warning(
+            "Missing Ollama model(s): {missing}. Installed models: {installed}.".format(
+                missing=missing,
+                installed=installed,
+            )
+        )
 
 
 def render_citations(citations) -> None:
@@ -118,8 +211,8 @@ def main() -> None:
     pipeline = get_pipeline()
     render_sidebar(pipeline)
 
-    st.title("Hybrid RAG Document Q&A")
-    st.caption("Upload documents, build a local index, and ask grounded questions.")
+    st.title("Fast RAG MVP")
+    st.caption("Upload documents, keep indexing lightweight, and get cited answers quickly.")
 
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
@@ -145,8 +238,14 @@ def main() -> None:
             st.session_state["messages"].append({"role": "assistant", "content": answer, "citations": []})
             return
 
-        with st.spinner("Retrieving evidence and generating answer..."):
-            result = pipeline.answer(question)
+        try:
+            with st.spinner("Retrieving evidence and generating answer..."):
+                result = pipeline.answer(question)
+        except Exception as error:
+            answer = "Unable to answer right now: {error}".format(error=error)
+            st.error(answer)
+            st.session_state["messages"].append({"role": "assistant", "content": answer, "citations": []})
+            return
 
         st.markdown(result.answer_markdown)
         render_citations(result.citations)

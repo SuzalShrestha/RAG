@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import List
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_ollama import ChatOllama
 
 from app.config import Settings
 from app.utils.models import AnswerResult, Citation, RetrievedChunk
@@ -20,11 +19,28 @@ Do not cite chunks that were not provided.
 class AnswerGenerator:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.llm = ChatOllama(
-            model=settings.chat_model,
-            base_url=settings.ollama_base_url,
-            temperature=settings.temperature,
-        )
+        if settings.answer_uses_groq():
+            from langchain_groq import ChatGroq
+
+            self.llm = ChatGroq(
+                model_name=settings.chat_model,
+                temperature=settings.temperature,
+                api_key=settings.groq_api_key or None,
+            )
+        elif settings.answer_uses_ollama():
+            from langchain_ollama import ChatOllama
+
+            self.llm = ChatOllama(
+                model=settings.chat_model,
+                base_url=settings.ollama_base_url,
+                temperature=settings.temperature,
+            )
+        else:
+            raise ValueError(
+                "Unsupported LLM provider: {provider}".format(
+                    provider=settings.normalized_llm_provider(),
+                )
+            )
         self.prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", SYSTEM_PROMPT),

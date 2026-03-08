@@ -55,3 +55,4 @@ class IndexingSummary:
     total_documents: int
     total_chunks: int
     failed_files: List[str] = field(default_factory=list)
+    skipped_files: List[str] = field(default_factory=list)

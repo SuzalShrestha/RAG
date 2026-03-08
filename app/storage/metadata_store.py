@@ -110,13 +110,55 @@ class MetadataStore:
                 rows,
             )
 
+    def has_checksum(self, checksum: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM documents WHERE checksum = ? LIMIT 1",
+                (checksum,),
+            ).fetchone()
+        return row is not None
+
+    def remove_duplicate_documents(self) -> int:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT doc_id
+                FROM documents
+                WHERE rowid NOT IN (
+                    SELECT MAX(rowid)
+                    FROM documents
+                    GROUP BY checksum
+                )
+                """
+            ).fetchall()
+            duplicate_ids = [str(row["doc_id"]) for row in rows]
+            if not duplicate_ids:
+                return 0
+
+            placeholders = ", ".join("?" for _ in duplicate_ids)
+            connection.execute(
+                "DELETE FROM chunks WHERE doc_id IN ({placeholders})".format(
+                    placeholders=placeholders
+                ),
+                duplicate_ids,
+            )
+            connection.execute(
+                "DELETE FROM documents WHERE doc_id IN ({placeholders})".format(
+                    placeholders=placeholders
+                ),
+                duplicate_ids,
+            )
+
+        return len(duplicate_ids)
+
     def load_all_chunk_documents(self) -> List[Document]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT chunk_id, content, metadata_json
+                SELECT chunks.chunk_id, chunks.content, chunks.metadata_json, documents.checksum
                 FROM chunks
-                ORDER BY doc_id, chunk_index
+                JOIN documents ON documents.doc_id = chunks.doc_id
+                ORDER BY chunks.doc_id, chunks.chunk_index
                 """
             ).fetchall()
 
@@ -124,6 +166,8 @@ class MetadataStore:
         for row in rows:
             metadata = json.loads(row["metadata_json"])
             metadata["chunk_id"] = row["chunk_id"]
+            if row["checksum"] and "checksum" not in metadata:
+                metadata["checksum"] = row["checksum"]
             documents.append(Document(page_content=row["content"], metadata=metadata))
         return documents
 

@@ -23,16 +23,34 @@ def iter_input_paths(raw_paths):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build the local RAG indexes.")
-    parser.add_argument("paths", nargs="+", help="Files or directories to index")
+    parser = argparse.ArgumentParser(description="Parse documents locally and sync retrieval indexes.")
+    parser.add_argument("paths", nargs="*", help="Files or directories to index")
+    parser.add_argument(
+        "--from-db",
+        action="store_true",
+        help="Sync the stored chunk corpus to the configured retrieval backend without rereading raw files.",
+    )
     args = parser.parse_args()
 
     pipeline = RAGPipeline()
-    summary = pipeline.index_paths(iter_input_paths(args.paths))
+    if args.from_db:
+        print("Syncing retrieval indexes from the stored corpus...")
+        summary = pipeline.refresh_indexes()
+    else:
+        if not args.paths:
+            parser.error("paths are required unless --from-db is used")
+
+        input_paths = list(iter_input_paths(args.paths))
+        print("Scanning complete. Found {count} candidate files.".format(count=len(input_paths)))
+        print("Checking for new files and syncing retrieval indexes...")
+        summary = pipeline.index_paths(input_paths)
+
     print("Indexed files: {count}".format(count=summary.files_indexed))
     print("New chunks: {count}".format(count=summary.chunks_indexed))
     print("Total documents: {count}".format(count=summary.total_documents))
     print("Total chunks: {count}".format(count=summary.total_chunks))
+    if summary.skipped_files:
+        print("Already indexed files: {count}".format(count=len(summary.skipped_files)))
     if summary.failed_files:
         print("Skipped files: {count}".format(count=len(summary.failed_files)))
         for failure in summary.failed_files:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 from typing import Iterable, List
 
@@ -11,8 +12,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.chains.rag import RAGPipeline
-from app.config import get_settings
-from app.utils.runtime_checks import ollama_is_running
+from app.config import Settings, get_settings
+from app.utils.runtime_checks import groq_api_key_is_configured, ollama_is_running
 
 
 def load_jsonl(path: Path) -> List[dict]:
@@ -28,6 +29,26 @@ def load_jsonl(path: Path) -> List[dict]:
 def default_fixture_paths() -> List[Path]:
     fixture_dir = PROJECT_ROOT / "tests" / "fixtures" / "sample_docs"
     return sorted(path for path in fixture_dir.iterdir() if path.is_file())
+
+
+def isolated_settings(base_settings: Settings, root: Path) -> Settings:
+    payload = base_settings.model_dump()
+    payload.update(
+        retrieval_provider="local",
+        rerank_provider="local",
+        enable_dense_retrieval=False,
+        enable_sparse_retrieval=True,
+        enable_reranker=False,
+        raw_data_dir=root / "raw",
+        processed_data_dir=root / "processed",
+        eval_data_dir=root / "eval",
+        faiss_dir=root / "faiss",
+        bm25_dir=root / "bm25",
+        metadata_db_path=root / "data" / "metadata.db",
+    )
+    settings = Settings(_env_file=None, **payload)
+    settings.ensure_directories()
+    return settings
 
 
 def verify_retrieval(pipeline: RAGPipeline, cases: Iterable[dict], top_k: int) -> List[str]:
@@ -88,7 +109,7 @@ def main() -> None:
     parser.add_argument(
         "--with-generation",
         action="store_true",
-        help="Also run answer generation checks if Ollama is available.",
+        help="Also run answer generation checks if the configured LLM provider is available.",
     )
     parser.add_argument(
         "--top-k",
@@ -106,38 +127,41 @@ def main() -> None:
         raise ValueError("No smoke-test documents were found.")
 
     settings = get_settings()
-    pipeline = RAGPipeline(settings=settings)
-    summary = pipeline.index_paths(doc_paths)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pipeline = RAGPipeline(settings=isolated_settings(settings, Path(temp_dir)))
+        summary = pipeline.index_paths(doc_paths)
 
-    print("Indexed files: {count}".format(count=summary.files_indexed))
-    print("Indexed chunks: {count}".format(count=summary.chunks_indexed))
+        print("Indexed files: {count}".format(count=summary.files_indexed))
+        print("Indexed chunks: {count}".format(count=summary.chunks_indexed))
 
-    retrieval_failures = verify_retrieval(pipeline, cases, args.top_k)
-    for failure in retrieval_failures:
-        print("FAIL:", failure)
-
-    generation_requested = args.with_generation
-    generation_failures = []
-
-    if generation_requested:
-        if not ollama_is_running(settings.ollama_base_url):
-            raise RuntimeError(
-                "Ollama is not reachable at {url}. Start `ollama serve` and try again.".format(
-                    url=settings.ollama_base_url,
-                )
-            )
-        generation_failures = verify_generation(pipeline, cases)
-        for failure in generation_failures:
+        retrieval_failures = verify_retrieval(pipeline, cases, args.top_k)
+        for failure in retrieval_failures:
             print("FAIL:", failure)
 
-    if retrieval_failures or generation_failures:
-        raise SystemExit(1)
+        generation_requested = args.with_generation
+        generation_failures = []
 
-    print("PASS: retrieval smoke test")
-    if generation_requested:
-        print("PASS: generation smoke test")
-    else:
-        print("Generation checks were skipped. Re-run with --with-generation once Ollama is running.")
+        if generation_requested:
+            if settings.answer_uses_groq() and not groq_api_key_is_configured(settings.groq_api_key):
+                raise RuntimeError("Groq API key is missing. Set `RAG_GROQ_API_KEY` in `.env` and try again.")
+            if settings.answer_uses_ollama() and not ollama_is_running(settings.ollama_base_url):
+                raise RuntimeError(
+                    "Ollama is not reachable at {url}. Start `ollama serve` and try again.".format(
+                        url=settings.ollama_base_url,
+                    )
+                )
+            generation_failures = verify_generation(pipeline, cases)
+            for failure in generation_failures:
+                print("FAIL:", failure)
+
+        if retrieval_failures or generation_failures:
+            raise SystemExit(1)
+
+        print("PASS: retrieval smoke test")
+        if generation_requested:
+            print("PASS: answer smoke test")
+        else:
+            print("Answer checks were skipped. Re-run with --with-generation to validate answer formatting.")
 
 
 if __name__ == "__main__":

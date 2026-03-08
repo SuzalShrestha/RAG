@@ -1,7 +1,9 @@
 langchain
 langchain-community
+langchain-groq
 langchain-ollama
 langchain-text-splitters
+pinecone
 faiss-cpu
 streamlit
 pydantic-settings
