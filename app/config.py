@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     dense_weight: float = 1.0
     sparse_weight: float = 1.0
+    retrieval_cache_size: int = 64
+    enable_structured_logs: bool = True
+    enable_ocr: bool = False
+    ocr_language: str = "eng"
+    default_collection_name: str = "default"
 
     raw_data_dir: Path = Field(default=DATA_DIR / "raw")
     processed_data_dir: Path = Field(default=DATA_DIR / "processed")
@@ -68,6 +73,7 @@ class Settings(BaseSettings):
     faiss_dir: Path = Field(default=INDEX_DIR / "faiss")
     bm25_dir: Path = Field(default=INDEX_DIR / "bm25")
     metadata_db_path: Path = Field(default=PROJECT_ROOT / "data" / "metadata.db")
+    telemetry_log_path: Path = Field(default=DATA_DIR / "processed" / "telemetry.jsonl")
 
     def ensure_directories(self) -> None:
         for directory in (

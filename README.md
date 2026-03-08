@@ -80,6 +80,18 @@ or:
 - `RAG_ENABLE_SPARSE_RETRIEVAL=true`
 - `RAG_ENABLE_RERANKER=true`
 
+## Phase 6 Production Extensions
+
+The current app includes the Phase 6 hardening layer from `plan.md`:
+
+- Retrieval backend abstraction via `RAG_RETRIEVAL_PROVIDER` (`pinecone` or `local`)
+- Rerank backend abstraction via `RAG_RERANK_PROVIDER` (`pinecone` or `local`)
+- Retrieval result cache (`RAG_RETRIEVAL_CACHE_SIZE`)
+- Background indexing jobs in Streamlit
+- Optional OCR fallback for PDFs (`RAG_ENABLE_OCR`, `RAG_OCR_LANGUAGE`)
+- Structured telemetry logs (`RAG_ENABLE_STRUCTURED_LOGS`, `RAG_TELEMETRY_LOG_PATH`)
+- Document collections and query-time filters (`RAG_DEFAULT_COLLECTION_NAME`, UI filters)
+
 The default Pinecone setup uses:
 
 - dense index `rag-dense` with `multilingual-e5-large`

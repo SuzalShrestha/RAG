@@ -15,6 +15,16 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     fitz = None
 
+try:
+    from PIL import Image
+except ImportError:  # pragma: no cover - optional dependency
+    Image = None
+
+try:
+    import pytesseract
+except ImportError:  # pragma: no cover - optional dependency
+    pytesseract = None
+
 from app.utils.models import LoadedDocumentSet
 
 
@@ -42,7 +52,13 @@ def normalize_text(text: str) -> str:
     return normalized.strip()
 
 
-def load_file(path: Path, checksum: Optional[str] = None) -> LoadedDocumentSet:
+def load_file(
+    path: Path,
+    checksum: Optional[str] = None,
+    collection_name: str = "default",
+    enable_ocr: bool = False,
+    ocr_language: str = "eng",
+) -> LoadedDocumentSet:
     if not path.exists():
         raise FileNotFoundError("File not found: {path}".format(path=path))
 
@@ -59,11 +75,11 @@ def load_file(path: Path, checksum: Optional[str] = None) -> LoadedDocumentSet:
     doc_id = build_doc_id(path, checksum)
 
     if suffix == ".pdf":
-        documents = _load_pdf(path, doc_id)
+        documents = _load_pdf(path, doc_id, collection_name, enable_ocr=enable_ocr, ocr_language=ocr_language)
     elif suffix == ".docx":
-        documents = _load_docx(path, doc_id)
+        documents = _load_docx(path, doc_id, collection_name)
     else:
-        documents = _load_text(path, doc_id)
+        documents = _load_text(path, doc_id, collection_name)
 
     if not documents:
         raise ValueError(
@@ -79,32 +95,43 @@ def load_file(path: Path, checksum: Optional[str] = None) -> LoadedDocumentSet:
         checksum=checksum,
         file_type=suffix.lstrip("."),
         documents=documents,
+        collection_name=collection_name,
     )
 
 
-def _base_metadata(path: Path, doc_id: str, file_type: str) -> dict:
+def _base_metadata(path: Path, doc_id: str, file_type: str, collection_name: str) -> dict:
     return {
         "doc_id": doc_id,
         "filename": path.name,
         "source_path": str(path.resolve()),
         "file_type": file_type,
+        "collection_name": collection_name,
     }
 
 
-def _load_pdf(path: Path, doc_id: str) -> List[Document]:
-    documents = _load_pdf_with_pymupdf(path, doc_id)
+def _load_pdf(
+    path: Path,
+    doc_id: str,
+    collection_name: str = "default",
+    enable_ocr: bool = False,
+    ocr_language: str = "eng",
+) -> List[Document]:
+    documents = _load_pdf_with_pymupdf(path, doc_id, collection_name)
     if documents:
         return documents
 
-    documents = _load_pdf_with_pypdf(path, doc_id)
+    documents = _load_pdf_with_pypdf(path, doc_id, collection_name)
     if documents:
         return documents
+
+    if enable_ocr:
+        return _load_pdf_with_ocr(path, doc_id, collection_name, ocr_language)
 
     return []
 
 
-def _load_pdf_with_pypdf(path: Path, doc_id: str) -> List[Document]:
-    base_metadata = _base_metadata(path, doc_id, "pdf")
+def _load_pdf_with_pypdf(path: Path, doc_id: str, collection_name: str) -> List[Document]:
+    base_metadata = _base_metadata(path, doc_id, "pdf", collection_name)
     documents = []
 
     try:
@@ -124,11 +151,11 @@ def _load_pdf_with_pypdf(path: Path, doc_id: str) -> List[Document]:
     return documents
 
 
-def _load_pdf_with_pymupdf(path: Path, doc_id: str) -> List[Document]:
+def _load_pdf_with_pymupdf(path: Path, doc_id: str, collection_name: str) -> List[Document]:
     if fitz is None:
         return []
 
-    base_metadata = _base_metadata(path, doc_id, "pdf")
+    base_metadata = _base_metadata(path, doc_id, "pdf", collection_name)
     documents = []
     pdf = fitz.open(str(path))
 
@@ -147,9 +174,34 @@ def _load_pdf_with_pymupdf(path: Path, doc_id: str) -> List[Document]:
     return documents
 
 
-def _load_docx(path: Path, doc_id: str) -> List[Document]:
+def _load_pdf_with_ocr(path: Path, doc_id: str, collection_name: str, ocr_language: str) -> List[Document]:
+    if fitz is None or pytesseract is None or Image is None:
+        return []
+
+    base_metadata = _base_metadata(path, doc_id, "pdf", collection_name)
+    documents = []
+    pdf = fitz.open(str(path))
+
+    try:
+        for index, page in enumerate(pdf, start=1):
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), alpha=False)
+            image = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
+            text = normalize_text(pytesseract.image_to_string(image, lang=ocr_language) or "")
+            if not text:
+                continue
+            metadata = dict(base_metadata)
+            metadata["page_number"] = index
+            metadata["extractor"] = "ocr"
+            documents.append(Document(page_content=text, metadata=metadata))
+    finally:
+        pdf.close()
+
+    return documents
+
+
+def _load_docx(path: Path, doc_id: str, collection_name: str) -> List[Document]:
     document = WordDocument(str(path))
-    base_metadata = _base_metadata(path, doc_id, "docx")
+    base_metadata = _base_metadata(path, doc_id, "docx", collection_name)
     parts = []
     current_heading = None
 
@@ -175,8 +227,8 @@ def _load_docx(path: Path, doc_id: str) -> List[Document]:
     return [Document(page_content=content, metadata=metadata)]
 
 
-def _load_text(path: Path, doc_id: str) -> List[Document]:
-    base_metadata = _base_metadata(path, doc_id, path.suffix.lower().lstrip("."))
+def _load_text(path: Path, doc_id: str, collection_name: str) -> List[Document]:
+    base_metadata = _base_metadata(path, doc_id, path.suffix.lower().lstrip("."), collection_name)
     content = normalize_text(path.read_text(encoding="utf-8"))
     if not content:
         return []

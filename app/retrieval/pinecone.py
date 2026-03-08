@@ -20,6 +20,7 @@ PINECONE_RETURN_FIELDS = [
     "section_heading",
     "checksum",
     "source_path",
+    "collection_name",
 ]
 UPSERT_WINDOW_SECONDS = 60.0
 
@@ -50,7 +51,7 @@ class PineconeRetrieval:
                 documents=documents,
             )
 
-    def search_dense(self, query: str, k: int) -> List[RetrievedChunk]:
+    def search_dense(self, query: str, k: int, metadata_filter: Optional[Dict[str, Any]] = None) -> List[RetrievedChunk]:
         if not self.settings.uses_dense_retrieval():
             return []
         response = self._search(
@@ -58,10 +59,11 @@ class PineconeRetrieval:
             model_name=self.settings.pinecone_dense_model,
             query=query,
             k=k,
+            metadata_filter=metadata_filter,
         )
         return self._hits_to_chunks(response, score_kind="dense")
 
-    def search_sparse(self, query: str, k: int) -> List[RetrievedChunk]:
+    def search_sparse(self, query: str, k: int, metadata_filter: Optional[Dict[str, Any]] = None) -> List[RetrievedChunk]:
         if not self.settings.uses_sparse_retrieval():
             return []
         response = self._search(
@@ -69,6 +71,7 @@ class PineconeRetrieval:
             model_name=self.settings.pinecone_sparse_model,
             query=query,
             k=k,
+            metadata_filter=metadata_filter,
         )
         return self._hits_to_chunks(response, score_kind="sparse")
 
@@ -118,16 +121,26 @@ class PineconeRetrieval:
             self._upsert_records_with_retries(index, records, model_name, estimated_tokens)
             self._record_upsert_usage(model_name, estimated_tokens)
 
-    def _search(self, index_name: str, model_name: str, query: str, k: int):
+    def _search(
+        self,
+        index_name: str,
+        model_name: str,
+        query: str,
+        k: int,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+    ):
         index = self._get_index(index_name, model_name)
+        search_query = {
+            "inputs": {
+                "text": query,
+            },
+            "top_k": k,
+        }
+        if metadata_filter:
+            search_query["filter"] = metadata_filter
         return index.search(
             namespace=self.settings.pinecone_namespace,
-            query={
-                "inputs": {
-                    "text": query,
-                },
-                "top_k": k,
-            },
+            query=search_query,
             fields=PINECONE_RETURN_FIELDS,
         )
 
@@ -144,6 +157,7 @@ class PineconeRetrieval:
             "section_heading": metadata.get("section_heading"),
             "checksum": metadata.get("checksum"),
             "source_path": metadata.get("source_path"),
+            "collection_name": metadata.get("collection_name"),
         }
         for key, value in optional_fields.items():
             normalized = self._normalize_record_value(value)
