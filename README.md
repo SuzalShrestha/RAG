@@ -1,4 +1,4 @@
-#Cloud RAG
+# Cloud RAG
 
 This repository now defaults to a cloud-first MVP configuration intended to keep laptops cool:
 
